@@ -1,0 +1,46 @@
+name: CI Complete
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  get-build-scan-names:
+    if: github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    outputs:
+      build-scan-names: ${{ steps.build-scan-names.outputs.build-scan-names }}
+    steps:
+      - name: List buildscan artifacts
+        id: build-scan-names
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          names=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/runs/$RUN_ID/artifacts \
+            --jq '[.artifacts[] | select(.name | startswith("build-scan-")) | .name]')
+          echo "Found: $names"
+          echo "build-scan-names=$names" >> $GITHUB_OUTPUT
+  upload-build-scan:
+    needs: get-build-scan-names
+    if: github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build-scan-name: ${{ fromJson(needs.get-build-scan-names.outputs.build-scan-names) }}
+    steps:
+      - name: Setup build scan info
+        run: |
+          BUILD_SCAN_NAME="${{ matrix.build-scan-name }}"
+          echo "BUILD_SCAN_NAME_VALUE=<<$BUILD_SCAN_NAME>>"
+      - name: Prove privileged context
+        run: |
+          echo "actor=${{ github.actor }} ref=${{ github.ref }} event=${{ github.event_name }}"
+          echo "token_present=$([[ -n \"$GH_TOKEN\" ]] && echo yes || echo no)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
